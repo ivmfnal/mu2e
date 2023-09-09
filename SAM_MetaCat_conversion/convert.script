@@ -1,0 +1,50 @@
+[
+    - env PATH=.:$PATH
+    
+    init.sh
+    load_users.sh
+
+    #save_authenticators.sh -s production postgresql://ivm@ifdbprod.fnal.gov:5463/dune_metadata_prd
+    #restore_authenticators.sh
+    {
+
+	[
+	    preload_files_namespaces_datasets.sh
+	    {
+		load_files.sh
+		load_namespaces.sh
+		create_datasets.sh
+	    }
+	    index_datasets.sh
+	]
+    
+	[
+	    {   
+		preload_dimensions_text.sh
+		preload_runs_subruns.sh
+		preload_app_families.sh
+		preload_attrs_2.sh
+		preload_content_status.sh
+		preload_data_tiers.sh
+		preload_dimensions_float.sh
+		preload_dimensions_int.sh
+		preload_file_types.sh
+		preload_formats.sh
+	    }
+
+       	    merge_meta.sh
+
+	    {
+		index_metadata_1.sh
+		index_metadata_2.sh
+		index_files.sh
+		load_lineages.sh
+		create_other_tables.sh
+	        build_param_categories.sh
+	    }
+	]
+    }
+   
+    build_foreign_keys.sh
+    finalize.sh
+]    

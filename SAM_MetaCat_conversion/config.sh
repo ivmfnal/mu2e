@@ -1,0 +1,135 @@
+SRC_URL="postgresql://samread@sampgsdb02.fnal.gov:5433/sam_mu2e_prd"
+DST_URL="postgresql://mu2e_dm_web@ifdb08.fnal.gov:5465/mu2e_dm_prod"
+
+SRC_SCHEMA=""
+DST_SCHEMA=metacat_dev
+DST_SCHEMA=new_full
+WEB_USER=mu2e_dm_web
+
+if [ ! -z "$SRC_SCHEMA" ]; then
+    SRC_URL="${SRC_URL}?options=-c%20search_path%3d${SRC_SCHEMA}"
+fi
+
+if [ ! -z "$DST_SCHEMA" ]; then
+    DST_URL="${DST_URL}?options=-c%20search_path%3d${DST_SCHEMA}"
+fi
+
+#IN_DB_PSQL="psql -h sampgsdb03.fnal.gov -p 5435 -U samread -d sam_dune_prd"
+#OUT_DB_PSQL="psql -h ifdbprod.fnal.gov -p 5463 -d dune_metadata_prd"
+
+IN_DB_PSQL="psql -v ON_ERROR_STOP=on ${SRC_URL}"
+OUT_DB_PSQL="psql -v ON_ERROR_STOP=on ${DST_URL}"
+
+core_category="core"
+origin_category="origin"
+default_namespace="default"
+default_user="mu2e"
+
+
+function create_meta_table () {
+    $OUT_DB_PSQL -q << _EOF_
+
+    \set on_error_stop on
+
+    create table if not exists meta (
+        file_id text,
+        name    text,
+        value   jsonb
+    );
+_EOF_
+}
+
+create_active_files_view_100K="create temp view active_files as
+        select * from data_files
+                where retired_date is null
+                order by file_id desc
+                limit 100000   -- while in development
+;
+"
+
+create_active_files_view_all="create temp view active_files as
+        select * from data_files
+                where retired_date is null
+;
+"
+
+create_active_files_view=$create_active_files_view_all
+
+function init_destination () {
+
+    echo "Source database URL:      $SRC_URL"
+    echo "Destination database URL: $DST_URL"
+
+    $OUT_DB_PSQL << _EOF_
+        create schema if not exists ${DST_SCHEMA};
+        
+        drop table if exists meta;
+        drop table if exists raw_files;
+        drop table if exists files cascade;
+        drop table if exists files_datasets, parameter_definitions, parent_child, datasets_parent_child, users_roles cascade;
+        drop table if exists namespaces, parameter_categories, queries cascade;
+        drop table if exists files, datasets cascade;
+        drop table if exists users, roles cascade;    
+
+_EOF_
+}
+
+function finalize () {
+    $OUT_DB_PSQL << _EOF_
+        grant all on schema ${DST_SCHEMA} to ${WEB_USER};
+        grant all on all tables in schema ${DST_SCHEMA} to ${WEB_USER};
+        \echo
+        \echo Finalized
+        \echo
+_EOF_
+}
+
+
+function preload_meta() {
+
+    input=$1
+    create_meta_table
+
+    $OUT_DB_PSQL << _EOF_
+
+    \set on_error_stop on
+    \echo imporing metadata from ${input} ...
+
+    create temp table meta_columns (
+        file_id text,
+        name    text,
+        i       bigint,
+        t       text,
+        f       double precision,
+        ia      bigint[],
+        ta      text[]
+    );
+
+    \copy meta_columns (file_id, name, i, f, t, ia, ta) from '${input}';
+    
+    insert into meta (file_id, name, value) (
+        select file_id, name, coalesce(
+                to_jsonb(m.t), to_jsonb(m.f), to_jsonb(m.i), to_jsonb(m.ta), to_jsonb(m.ia)
+            )
+        from meta_columns m
+    );
+
+_EOF_
+
+}
+
+function preload_json_meta() {
+    
+    input=$1
+    create_meta_table
+    wc -l $input
+    #echo loading `wc -l $input` lines of metadata from $input ... 
+    
+    $OUT_DB_PSQL << _EOF_
+
+    \set on_error_stop on
+    \copy meta from '${input}';
+
+_EOF_
+}
+
